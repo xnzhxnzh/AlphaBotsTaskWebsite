@@ -168,7 +168,7 @@
         const saved = Object.assign({}, cur, rest, { primary: people.primary, members: people.members, end: o.milestone ? o.start : o.end || o.start, progress: o.status === 'Done' ? 100 : progress });
         delete saved.assignee;
         const stored = store.upsert('tasks', saved);
-        const note = App.deps.afterEdit(stored.id);
+        const note = a.level === 'status' ? '' : App.deps.afterEdit(stored.id); // students only change status, so nothing needs re-ordering
         done(note ? 'Saved. ' + note : 'Saved');
       },
       onDelete: cur && a.level === 'full' && (() => { store.remove('tasks', cur.id); done('Deleted'); })

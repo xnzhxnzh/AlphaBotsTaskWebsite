@@ -81,6 +81,7 @@
         const x0 = e.clientX;
         let moved = false;
         el.setPointerCapture(e.pointerId);
+        document.body.classList.add('dragging'); // hold off live updates from teammates until the drop
         const delta = (ev) => Math.round((ev.clientX - x0) / w);
         const onMove = (ev) => {
           if (Math.abs(ev.clientX - x0) > 3) moved = true;
@@ -90,6 +91,7 @@
         };
         const onUp = (ev) => {
           el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); el.removeEventListener('pointercancel', onUp);
+          document.body.classList.remove('dragging');
           const n = delta(ev);
           if (!moved) return open(r);
           if (!can) { ui.toast('Your role cannot change this.'); return App.render(); }

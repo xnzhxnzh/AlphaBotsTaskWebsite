@@ -38,7 +38,31 @@ and **only the admin can approve an account or give it more than student rights*
   them. New requests are always students. The admin can promote them afterwards.
 - Everyone must choose their own password the first time they sign in with a temporary one.
 
-### Read this: what "accounts" means on a static site
+## One shared schedule for the whole team (Firebase)
+
+With Firebase connected, everyone signs in to the same accounts and sees the same live schedule. A change one person
+makes shows up on everyone else's screen within a second. The roles above are enforced on Google's servers by
+`firestore.rules`, not just hidden in the page. It runs on Firebase's free plan.
+
+**One-time setup (about 15 minutes):**
+1. Go to <https://console.firebase.google.com> and click **Add project**. Name it `alphabots-schedule`. Google Analytics isn't needed.
+2. **Build > Authentication > Get started > Sign-in method > Email/Password**: turn on the first switch (leave "Email link" off) and save.
+3. **Build > Firestore Database > Create database**. Pick a location near you and choose **Production mode**.
+4. In Firestore, open the **Rules** tab. Delete what's there, paste in the whole of `firestore.rules`, and click **Publish**.
+5. Click the gear icon > **Project settings > General**. Under **Your apps**, click the web icon `</>`, give it a nickname, skip Hosting, and click **Register app**. Copy the `firebaseConfig` values it shows.
+6. In `firebase-config.js`, replace `null` with those values (the file shows the exact shape), then upload the changed file to GitHub.
+7. Open the site **yourself, first**. The first person to finish the setup screen becomes the one admin and gets the 15 student logins, so do this before you share the link.
+
+**Good to know:**
+- Students sign in with a username and password. Behind the scenes each username has a made-up email address, so nobody needs a real one.
+- **Reset password** gives the person a new temporary password to hand over. Firebase doesn't let a web page change someone else's password directly, so this creates a fresh login for that username.
+- The values in `firebase-config.js` are meant to be public. They only say which project to talk to. Never put a "service account" key or an admin SDK key in these files.
+- Anyone with the link can ask for access, but they see nothing until the admin approves them. Reject spam requests under Accounts.
+- If you see "unauthorized domain" when signing in, add your GitHub Pages address (for example `xnzhxnzh.github.io`) under **Authentication > Settings > Authorized domains**.
+
+Leave `firebase-config.js` as `null` and the site works without a database, saving data in each browser, as described next.
+
+### Read this: what "accounts" means when there is no database
 
 GitHub Pages only hosts files. It has no server and no database, so:
 
@@ -93,6 +117,10 @@ js/auth.js          accounts, passwords, roles and what each role may do
 js/ui.js            small UI helpers, forms and dialogs
 js/forms.js         create and edit forms
 js/views-main.js    home, calendar
+js/firebase-config.js  your Firebase project's settings (null = no shared database)
+js/cloud.js         Firebase sign-in, accounts, live sync (only active with the settings above)
+firebase/firestore.rules  the security rules to publish in the Firebase console
+make-upload.ps1     builds the flat upload folder for GitHub (see below)
 js/deps.js          task dependencies: order rules, loop check, automatic shifting
 js/views-gantt.js   Gantt chart and dependency arrows
 js/views-lists.js   tasks, parts, news, search

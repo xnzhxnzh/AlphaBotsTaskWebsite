@@ -1,0 +1,117 @@
+rules_version = '2';
+
+// Alphabots schedule. Paste all of this into Firebase console > Firestore Database > Rules, then click Publish.
+//
+// Who can do what:
+//   admin   (exactly one)  everything, including approving accounts
+//   mentor                 create, edit and delete events, tasks, parts and news
+//   lead                   create and edit events, tasks and parts; create and edit their own news posts
+//   student                read everything; change status and progress of tasks they are on (or their group is)
+// Pending and turned-off accounts can read nothing.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- who is asking ----------
+    function signedIn() { return request.auth != null; }
+    function profile(uid) { return /databases/$(database)/documents/users/$(uid); }
+    function hasProfile() { return signedIn() && exists(profile(request.auth.uid)); }
+    function me() { return get(profile(request.auth.uid)).data; }
+    function approved() { return hasProfile() && me().status == 'approved'; }
+    function isAdmin() { return approved() && me().role == 'admin'; }
+    function isMentor() { return approved() && me().role == 'mentor'; }
+    function isLead() { return approved() && me().role == 'lead'; }
+    function canEdit() { return isAdmin() || isMentor() || isLead(); }
+    function canDelete() { return isAdmin() || isMentor(); }
+    function adminMarker() { return /databases/$(database)/documents/meta/admin; }
+
+    // A student may change status/progress of a task that lists them (or their group) as primary or sub-person.
+    function studentOnTask() {
+      return approved() && me().role == 'student' &&
+        (me().name in resource.data.primary || me().name in resource.data.members ||
+         (me().group != '' && (me().group in resource.data.primary || me().group in resource.data.members)));
+    }
+
+    // ---------- accounts ----------
+    match /users/{uid} {
+      // Everyone approved can see the list (names fill the people pickers). You can always read your own profile.
+      allow read: if approved() || (signedIn() && request.auth.uid == uid);
+
+      allow create: if
+        // someone asking for access: always a pending student with no group
+        (signedIn() && request.auth.uid == uid
+          && request.resource.data.role == 'student' && request.resource.data.status == 'pending'
+          && request.resource.data.group == '' && request.resource.data.mustChange == false)
+        // the very first person on an empty database becomes the one admin (the marker is written in the same batch)
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.role == 'admin' && request.resource.data.status == 'approved'
+          && !exists(adminMarker()) && getAfter(adminMarker()).data.uid == uid)
+        // the admin adds accounts for other people, never another admin
+        || (isAdmin() && request.resource.data.role != 'admin');
+
+      allow update:
+        // the admin manages everyone else, and can never create a second admin
+        if (isAdmin() && resource.data.role != 'admin' && request.resource.data.role != 'admin')
+        // the admin can edit their own name, username and group
+        || (isAdmin() && request.auth.uid == uid && request.resource.data.role == 'admin'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'username', 'group', 'mustChange']))
+        // anyone can clear their own "choose a new password" flag
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mustChange'])
+          && request.resource.data.mustChange == false);
+
+      allow delete: if isAdmin() && resource.data.role != 'admin';
+    }
+
+    // Sign-in looks a username up here before it has a password. It holds only a made-up email address.
+    match /usernames/{name} {
+      allow read: if true;
+      allow create: if
+        (signedIn() && request.resource.data.uid == request.auth.uid
+          && getAfter(profile(request.auth.uid)).data.username == name)
+        || isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // ---------- shared settings and the single-admin marker ----------
+    match /meta/admin {
+      allow read: if true;
+      allow create: if signedIn() && !exists(adminMarker()) && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false; // never changes: this is what keeps the admin unique
+    }
+    match /meta/settings {
+      allow read: if approved();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (canEdit() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['autoShift']));
+    }
+
+    // ---------- the schedule ----------
+    match /tasks/{id} {
+      allow read: if approved();
+      allow create: if canEdit();
+      allow update: if canEdit()
+        || (studentOnTask() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'progress']));
+      allow delete: if canDelete();
+    }
+    match /events/{id} {
+      allow read: if approved();
+      allow create, update: if canEdit();
+      allow delete: if canDelete();
+    }
+    match /parts/{id} {
+      allow read: if approved();
+      allow create, update: if canEdit();
+      allow delete: if canDelete();
+    }
+    match /news/{id} {
+      allow read: if approved();
+      allow create: if isAdmin() || isMentor() || (isLead() && request.resource.data.author == me().name);
+      allow update: if isAdmin() || isMentor()
+        || (isLead() && resource.data.author == me().name && request.resource.data.author == me().name);
+      allow delete: if canDelete();
+    }
+
+    // anything not listed above is closed
+  }
+}

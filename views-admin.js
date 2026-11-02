@@ -58,7 +58,10 @@
         { name: 'username', label: 'Username', required: true, help: 'Letters, numbers, dots, dashes, underscores.' },
         { name: 'group', label: 'Group', type: 'select', options: [{ value: '', label: 'No group' }, ...store.groups()], help: 'Students can update tasks assigned to their group.', full: true }
       ],
-      onSubmit(o) { try { auth.update(a.id, o); } catch (e) { return e.message; } ui.toast('Saved'); App.render(); }
+      onSubmit(o) {
+        let done; try { done = Promise.resolve(auth.update(a.id, o)); } catch (e) { return e.message; } // browser-only mode throws at once, the shared database answers later
+        done.then(() => { ui.toast('Saved'); App.render(); }).catch(fail);
+      }
     });
   }
   function addAccount() {
@@ -118,7 +121,9 @@
     root.append(
       App.pageHead('Accounts', `${list.length} accounts, ${students} students`, h('button', { class: 'btn btn-primary', type: 'button', onclick: addAccount }, [ui.icon('plus'), 'Add account'])),
       h('div', { class: 'card', style: { marginBottom: '16px', padding: '12px 16px', borderColor: 'var(--warn)' } },
-        h('strong', null, 'Read this: '), 'accounts are stored in this browser only, because the site has no server. Other devices do not see them, and anyone who can open this browser\'s developer tools can read or change the data. Use it to keep the interface tidy, not for secrets. Export a backup from Settings to move everything to another device.'),
+        App.cloud && App.cloud.enabled
+          ? [h('strong', null, 'Shared accounts: '), 'everyone signs in against the team database, and its rules enforce the roles. A password reset gives that person a new temporary password to hand over, and they choose their own the next time they sign in.']
+          : [h('strong', null, 'Read this: '), 'accounts are stored in this browser only, because the site has no server. Other devices do not see them, and anyone who can open this browser\'s developer tools can read or change the data. Use it to keep the interface tidy, not for secrets. Export a backup from Settings to move everything to another device.']),
       pendingCard,
       h('h2', { style: { fontSize: '16px', margin: '8px 0' } }, 'Roles'),
       h('div', { class: 'grid grid-4', style: { marginBottom: '18px' } }, Object.keys(auth.ROLES).map((r) => h('div', { class: 'card stat' }, h('strong', null, auth.ROLES[r].label), h('div', { class: 'lbl' }, auth.ROLES[r].blurb)))),
@@ -135,8 +140,11 @@
     const file = h('input', { type: 'file', accept: 'application/json,.json', hidden: true, onchange: (e) => {
       const f = e.target.files[0]; if (!f) return;
       const r = new FileReader();
-      r.onload = () => ui.confirm('Replace everything on this device with the contents of ' + f.name + '? Accounts in the file replace the current ones.', 'Replace', () => {
-        try { store.replaceAll(JSON.parse(r.result)); auth.logout(); location.reload(); } catch (err) { fail(err); }
+      const shared = !!(App.cloud && App.cloud.enabled);
+      r.onload = () => ui.confirm(shared
+        ? 'Replace the shared schedule (tasks, events, parts, news and settings) for everyone with the contents of ' + f.name + '? Accounts are not changed.'
+        : 'Replace everything on this device with the contents of ' + f.name + '? Accounts in the file replace the current ones.', 'Replace', () => {
+        try { store.replaceAll(JSON.parse(r.result)); if (shared) { App.render(); ui.toast('Imported'); } else { auth.logout(); location.reload(); } } catch (err) { fail(err); }
       });
       r.readAsText(f); e.target.value = '';
     } });
@@ -157,7 +165,9 @@
           App.render(); ui.toast('Saved');
         }, 'btn-primary'))),
       card('Backup and moving devices',
-        h('p', { style: { marginTop: 0 } }, 'Everything is saved in this browser. Download a backup regularly, and use it to open the same schedule on another device.'),
+        h('p', { style: { marginTop: 0 } }, App.cloud && App.cloud.enabled
+          ? 'The schedule is saved in the team database. A backup file is a safety copy of the tasks, events, parts, news and settings. Download one now and then.'
+          : 'Everything is saved in this browser. Download a backup regularly, and use it to open the same schedule on another device.'),
         row(b('Export backup (JSON)', 'download', () => ui.download(`alphabots-backup-${App.date.today()}.json`, store.exportJson(), 'application/json'), 'btn-primary'),
           b('Import backup', 'upload', () => file.click()), b('Download calendar (.ics)', 'download', () => App.exportIcs()), file)),
       card('Example items',

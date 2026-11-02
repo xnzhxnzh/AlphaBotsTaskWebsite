@@ -44,7 +44,11 @@
   }
 
   App.render = function () {
+    const cloud = App.cloud || {};
+    if (cloud.enabled && cloud.booting) return showMessage('Loading', 'Connecting to the team database...');
     const user = auth.current();
+    // The database could not be reached or read at all (no internet, Firestore not created, rules not published).
+    if (cloud.enabled && !user && cloud.adminExists == null) return showMessage('Cannot reach the team database', cloud.error || 'Reload the page to try again.', true);
     if (!user) return showGate();
     if (user.mustChange) return showForcedPassword();
     $('gate') && $('gate').remove();
@@ -60,6 +64,18 @@
     try { App.views[view](root, params); } catch (e) { console.error(e); root.append(h('div', { class: 'card empty' }, 'Something went wrong drawing this page: ' + e.message)); }
     window.scrollTo(0, view === window.__lastView ? scroll : 0);
     window.__lastView = view;
+  };
+
+  /* Redraw after data arrives from the database, but never while someone is typing in a field or dragging a bar. */
+  let renderTimer = null;
+  App.scheduleRender = function () {
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(function tick() {
+      const a = document.activeElement;
+      const typing = a && $('view').contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName);
+      if (typing || document.body.classList.contains('dragging')) { renderTimer = setTimeout(tick, 1200); return; }
+      App.render();
+    }, 120);
   };
 
   function buildChrome(user, active) {
@@ -96,7 +112,7 @@
     const g = h('div', { class: 'gate', id: 'gate' }, h('div', { class: 'gate-card card' },
       h('div', { class: 'gate-brand' }, h('svg', { viewBox: '0 0 40 40', class: 'brand-logo', 'aria-hidden': 'true' }), h('span', null, `${store.state.settings.teamName} ${store.state.settings.teamNumber}`.trim())),
       h('h1', null, title), intro && h('p', { class: 'muted' }, intro), body,
-      h('p', { class: 'muted gate-note' }, 'Accounts are kept in this browser. See the README for what that means.')));
+      h('p', { class: 'muted gate-note' }, App.cloud && App.cloud.enabled ? 'Your schedule is shared with the whole team.' : 'Accounts are kept in this browser. See the README for what that means.')));
     g.querySelector('svg').innerHTML = '<rect x="2" y="2" width="36" height="36" rx="9" fill="#1e64dc"/><text x="20" y="30" font-size="28" font-weight="700" font-family="Times New Roman,serif" text-anchor="middle" fill="#fff">&#945;</text>';
     document.body.append(g);
     return g;
@@ -105,9 +121,17 @@
   const inp = (id, type, extra) => h('input', Object.assign({ id, type: type || 'text', autocomplete: 'off', required: true }, extra));
   const busy = (button, on) => { button.disabled = on; };
 
+  // A plain message screen (loading, or a connection problem with a reload button).
+  function showMessage(title, text, retry) {
+    const g = gateShell(title, text, retry ? h('button', { class: 'btn btn-primary', type: 'button', onclick: () => location.reload() }, 'Try again') : null);
+    g.dataset.kind = 'message';
+  }
+  const hasGate = (kind) => $('gate') && $('gate').dataset.kind === kind; // do not rebuild a screen someone is typing on
+
   function showGate() {
     document.querySelectorAll('#modal-root > *').forEach((n) => n.remove());
     if (!auth.hasAdmin()) return showSetup();
+    if (hasGate('login')) return;
     let mode = 'in';
     const draw = () => {
       const err = h('div', { class: 'form-error', hidden: true, style: { marginBottom: '10px' } });
@@ -125,6 +149,7 @@
             App.render();
           } }, field('Username', u), field('Password', p), err, go),
           h('p', null, 'No account yet? ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); mode = 'req'; draw(); } }, 'Request access')));
+        g.dataset.kind = 'login';
         u.focus();
       } else {
         const n = inp('g-name'), u = inp('g-user', 'text'), p = inp('g-pass', 'password', { autocomplete: 'new-password' });
@@ -138,6 +163,7 @@
             mode = 'in'; draw(); document.querySelector('#gate .gate-card h1').after(h('p', { style: { color: 'var(--primary)', fontWeight: 600 } }, 'Request sent. You can sign in once the admin approves it.'));
           } }, field('Your name', n), field('Choose a username', u), field('Choose a password', p), err, go),
           h('p', null, h('a', { href: '#', onclick: (e) => { e.preventDefault(); mode = 'in'; draw(); } }, 'Back to sign in')));
+        g.dataset.kind = 'login';
         n.focus();
       }
     };
@@ -145,6 +171,8 @@
   }
 
   function showSetup() {
+    if (hasGate('setup')) return;
+    const cloudOn = !!(App.cloud && App.cloud.enabled);
     const err = h('div', { class: 'form-error', hidden: true, style: { marginBottom: '10px' } });
     const n = inp('s-name'), u = inp('s-user', 'text'), p = inp('s-pass', 'password', { autocomplete: 'new-password' });
     const go = h('button', { class: 'btn btn-primary', type: 'submit', style: { width: '100%', justifyContent: 'center' } }, 'Create admin account');
@@ -154,24 +182,30 @@
       r.onload = () => { try { store.replaceAll(JSON.parse(r.result)); if (!auth.hasAdmin()) throw new Error('That backup has no admin account.'); location.reload(); } catch (x) { err.textContent = x.message; err.hidden = false; } };
       r.readAsText(f);
     } });
-    gateShell('Set up the admin account', 'This is the first time the site has been opened here. The admin is the highest authority: approves accounts, sets roles, and manages settings. There is exactly one. 15 student accounts are created for you with temporary passwords.',
+    const intro = cloudOn
+      ? 'The team database is empty. Whoever finishes this screen first becomes the one admin, the highest authority: approves accounts, sets roles and manages settings. Do it yourself before you share the link. 15 student accounts are created for you with temporary passwords.'
+      : 'This is the first time the site has been opened here. The admin is the highest authority: approves accounts, sets roles, and manages settings. There is exactly one. 15 student accounts are created for you with temporary passwords.';
+    const g = gateShell('Set up the admin account', intro,
       h('form', { novalidate: true, onsubmit: async (e) => {
         e.preventDefault(); busy(go, true);
-        let r; try { r = await auth.setupAdmin({ name: n.value, username: u.value, password: p.value }); } catch (x) { r = { error: x.message }; }
-        busy(go, false);
+        let r; try { r = await auth.setupAdmin({ name: n.value, username: u.value, password: p.value }, (i, total) => { go.textContent = `Creating student accounts ${i} of ${total}...`; }); } catch (x) { r = { error: x.message }; }
+        busy(go, false); go.textContent = 'Create admin account';
         if (r.error) { err.textContent = r.error; err.hidden = false; return; }
         App.render();
         App.showCredentials('Student logins (shown once)', r.students);
       } }, field('Your name', n), field('Admin username', u), field('Admin password (8+ characters)', p), err, go),
-      h('p', null, 'Moving from another device? ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); file.click(); } }, 'Restore a backup file'), file));
+      cloudOn ? null : h('p', null, 'Moving from another device? ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); file.click(); } }, 'Restore a backup file'), file));
+    g.dataset.kind = 'setup';
     n.focus();
   }
 
   function showForcedPassword() {
+    if (hasGate('forced')) return;
     const g = gateShell('Choose a new password', 'You are using a temporary password. Pick your own to continue.',
       App.passwordForm({ forced: true, onDone: () => App.render() }));
     g.querySelector('.modal-foot').style.padding = '0';
     g.querySelector('.modal-body').style.cssText = 'padding:0;display:block';
+    g.dataset.kind = 'forced';
   }
 
   /* ---------- start ---------- */
@@ -185,6 +219,7 @@
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu-wrap')) { toggleCreate(false); toggleAccount(false); } });
     $('search-form').addEventListener('submit', (e) => { e.preventDefault(); if (auth.current()) location.hash = '#/search?q=' + encodeURIComponent($('search-input').value.trim()); });
     window.addEventListener('hashchange', () => { ui.closeModal(); App.render(); });
+    if (store.isCloud) store.onChange(() => App.scheduleRender()); // live updates from teammates
     App.render();
   });
 })();

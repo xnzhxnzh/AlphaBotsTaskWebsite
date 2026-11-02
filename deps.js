@@ -50,7 +50,7 @@
         queue.push(s.id);
       }
     }
-    if (moved.size) store.persist();
+    for (const m of moved.values()) store.upsert('tasks', m); // saves each moved task (locally, or to the shared database)
     return [...moved.values()];
   };
 

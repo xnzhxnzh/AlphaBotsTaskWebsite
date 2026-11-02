@@ -96,6 +96,7 @@
     task('Build drivetrain').waitsFor = [task('Finalize drivetrain CAD').id];
     task('Program autonomous routine').waitsFor = [task('Program TeleOp controls').id];
     task('Robot competition-ready').waitsFor = [task('Build drivetrain').id, task('Program autonomous routine').id];
+    s.tasks.forEach((t) => { t.waitsFor = t.waitsFor || []; });
     return s;
   }
   // Drops dependency links that point at missing tasks, at the task itself, or that would form a loop.
@@ -135,7 +136,7 @@
     const groups = Array.isArray(s.groups) ? s.groups.map((g) => str(g, 60).trim()).filter(Boolean).slice(0, 30) : C.groups.slice();
     const out = {
       version: 1,
-      settings: { teamName: str(s.teamName, 60) || 'Alphabots', teamNumber: str(s.teamNumber, 20), groups: groups.length ? groups : C.groups.slice(), autoShift: s.autoShift !== false },
+      settings: { teamName: str(s.teamName, 60) || 'Alphabots', teamNumber: s.teamNumber == null ? '16026' : str(s.teamNumber, 20), groups: groups.length ? groups : C.groups.slice(), autoShift: s.autoShift !== false },
       accounts: [], people: [], events: [], tasks: [], parts: [], news: []
     };
     if (raw.accounts != null && !Array.isArray(raw.accounts)) throw new Error('"accounts" must be a list.');
@@ -175,51 +176,81 @@
     return out;
   }
 
+  const cloudMode = !!(window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey);
+  const blank = () => sanitize({});
+  const contentOf = (s) => ({ tasks: s.tasks, events: s.events, parts: s.parts, news: s.news });
+
   let state;
   let storageOk = true;
-  try {
-    const saved = localStorage.getItem(KEY);
-    state = saved ? sanitize(JSON.parse(saved)) : seed();
-  } catch (e) {
-    state = seed();
+  let sink = null; // cloud mode: where writes go (Firestore). null = this browser's localStorage.
+  if (cloudMode) state = blank(); // shared data arrives from the database
+  else {
+    try {
+      const saved = localStorage.getItem(KEY);
+      state = saved ? sanitize(JSON.parse(saved)) : seed();
+    } catch (e) {
+      state = seed();
+    }
   }
   const listeners = [];
+  const notify = () => listeners.forEach((fn) => fn());
 
+  // Local mode only: keep a copy in this browser.
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(state)); storageOk = true; }
-    catch (e) { storageOk = false; if (App.ui) App.ui.toast('Could not save in this browser. Use Settings > Export backup to keep your data.'); }
-    listeners.forEach((fn) => fn());
+    if (!sink) {
+      try { localStorage.setItem(KEY, JSON.stringify(state)); storageOk = true; }
+      catch (e) { storageOk = false; if (App.ui) App.ui.toast('Could not save in this browser. Use Settings > Export backup to keep your data.'); }
+    }
+    notify();
   }
+  // After replacing whole collections (import, clear, examples): tell the database what to add and remove.
+  function replaced(prev) { if (sink) { sink.replaceContent(prev, contentOf(state)); notify(); } else save(); }
 
   App.store = {
+    isCloud: cloudMode,
     get state() { return state; },
     get storageOk() { return storageOk; },
     onChange(fn) { listeners.push(fn); },
-    persist() { save(); }, // after changing state in place
+    persist() { save(); }, // after changing state in place (local mode)
     list(coll) { return state[coll]; },
     find(coll, id) { return state[coll].find((o) => o.id === id); },
     upsert(coll, obj) {
       const i = obj.id ? state[coll].findIndex((o) => o.id === obj.id) : -1;
       if (i >= 0) state[coll][i] = obj; else { obj.id = uid(); state[coll].push(obj); }
-      save();
+      if (sink) { sink.upsert(coll, obj); notify(); } else save();
       return obj;
     },
     remove(coll, id) {
       state[coll] = state[coll].filter((o) => o.id !== id);
-      if (coll === 'tasks') state.tasks.forEach((t) => { t.waitsFor = (t.waitsFor || []).filter((p) => p !== id); }); // nothing waits for a deleted task
-      save();
+      const changed = [];
+      if (coll === 'tasks') state.tasks.forEach((t) => { if ((t.waitsFor || []).includes(id)) { t.waitsFor = t.waitsFor.filter((p) => p !== id); changed.push(t); } }); // nothing waits for a deleted task
+      if (sink) { sink.remove(coll, id); changed.forEach((t) => sink.upsert('tasks', t)); notify(); } else save();
     },
-    replaceAll(raw) { const keep = state.accounts; state = sanitize(raw); if (!state.accounts.length) state.accounts = keep; save(); },
-    reset() { const keep = state.accounts, s = state.settings; state = seed(); state.accounts = keep; state.settings = s; save(); },
-    clearAll() { const s = state.settings, keep = state.accounts; state = sanitize({ settings: s }); state.accounts = keep; save(); },
-    removeExamples() { for (const k of COLLECTIONS) state[k] = state[k].filter((o) => !o.example); save(); },
+    replaceAll(raw) {
+      const prev = contentOf(state), keep = state.accounts;
+      state = sanitize(raw);
+      if (sink || !state.accounts.length) state.accounts = keep; // a backup never replaces the live accounts in cloud mode
+      if (sink) sink.settings(state.settings);
+      replaced(prev);
+    },
+    reset() { const prev = contentOf(state), keep = state.accounts, s = state.settings; state = seed(); state.accounts = keep; state.settings = s; if (sink) state.people = []; replaced(prev); },
+    clearAll() { const prev = contentOf(state), s = state.settings, keep = state.accounts; state = sanitize({ settings: s }); state.accounts = keep; replaced(prev); },
+    removeExamples() { const prev = contentOf(state); for (const k of COLLECTIONS) state[k] = state[k].filter((o) => !o.example); replaced(prev); },
     hasExamples() { return COLLECTIONS.some((k) => state[k].some((o) => o.example)); },
-    saveSettings(patch) { Object.assign(state.settings, patch); save(); },
+    saveSettings(patch) { Object.assign(state.settings, patch); if (sink) { sink.settings(state.settings); notify(); } else save(); },
     groups() { return state.settings.groups; },
     assignees() {
       const names = [...state.people.map((p) => p.name), ...state.accounts.filter((a) => a.status === 'approved').map((a) => a.name)].filter(Boolean);
       return [...state.settings.groups, ...new Set(names)];
     },
-    exportJson() { return JSON.stringify(state, null, 2); }
+    exportJson() { return JSON.stringify(sink ? { ...state, accounts: [] } : state, null, 2); },
+
+    /* ---- used by the cloud connection (cloud.js) ---- */
+    setSink(s) { sink = s; },
+    setAccounts(list) { state.accounts = list; notify(); },
+    setSettings(data) { state.settings = sanitize({ settings: data || {} }).settings; notify(); },
+    applyRemote(coll, docs) { state[coll] = sanitize({ [coll]: docs })[coll]; notify(); },
+    resetBlank() { const b = blank(); for (const k of [...COLLECTIONS, 'accounts']) state[k] = b[k]; state.settings = b.settings; notify(); },
+    seedContent() { const s = seed(); return contentOf(s); }
   };
 })();
