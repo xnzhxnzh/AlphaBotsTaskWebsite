@@ -164,14 +164,18 @@
   const userDoc = (o) => ({ username: o.username, name: o.name, role: o.role, status: o.status, group: o.group || '', mustChange: !!o.mustChange, email: o.email, created: o.created || now() });
 
   /* ---------- the same API as the browser-only auth.js, now backed by Firebase ---------- */
-  const needAdmin = () => { if (!auth.isAdmin()) throw new Error('Only the admin can do that.'); };
+  const needAdmin = () => { if (!auth.isAdmin()) throw new Error('Only an admin can do that.'); };
   const target = (id) => { const a = store.state.accounts.find((x) => x.id === id); if (!a) throw new Error('Account not found.'); return a; };
   const checkName = (u) => (validUsername(u) ? '' : 'Usernames are 3 to 30 letters, numbers, dots, dashes or underscores.');
+  // All admins are equal. The one protection: nobody can demote, turn off, delete or reset their own account,
+  // so the team can never end up with no admin. The rules enforce the same on the server.
+  const guard = (a) => {
+    if (profile && a.id === profile.id) throw new Error('You cannot do that to your own account. Ask another admin.');
+  };
 
   Object.assign(auth, {
     current: () => profile,
-    hasAdmin: () => !!cloud.adminExists,
-    logout() { profile = null; detach(); store.resetBlank(); fauth.signOut().catch(() => {}); },
+    hasAdmin: () => !!cloud.adminExists,    logout() { profile = null; detach(); store.resetBlank(); fauth.signOut().catch(() => {}); },
 
     async login(username, password) {
       if (failures) await sleep(Math.min(failures, 6) * 600);
@@ -259,19 +263,16 @@
     },
 
     async approve(id, role, group) {
-      needAdmin(); const a = target(id);
-      if (role === 'admin' || a.role === 'admin') throw new Error('There can only be one admin.');
+      needAdmin(); target(id);
       await users().doc(id).update({ status: 'approved', role: auth.ROLES[role] ? role : 'student', group: group || '' });
     },
     async setRole(id, role) {
-      needAdmin(); const a = target(id);
-      if (a.role === 'admin') throw new Error('The admin account cannot change role.');
-      if (role === 'admin' || !auth.ROLES[role]) throw new Error('There can only be one admin.');
+      needAdmin(); guard(target(id));
+      if (!auth.ROLES[role]) throw new Error('Unknown role.');
       await users().doc(id).update({ role });
     },
     async setStatus(id, status) {
-      needAdmin(); const a = target(id);
-      if (a.role === 'admin') throw new Error('The admin account cannot be turned off.');
+      needAdmin(); guard(target(id));
       await users().doc(id).update({ status });
     },
     async update(id, { name, username, group }) {
@@ -291,7 +292,7 @@
        username and retires the old one (the old login has no profile any more, so it cannot get in). */
     async resetPassword(id) {
       needAdmin(); const a = target(id);
-      if (a.role === 'admin') throw new Error('Use "Change password" in your account menu for the admin account.');
+      guard(a); // for your own password use "Change password" in your account menu
       const temp = auth.tempPassword(), email = makeEmail(a.username);
       const uid2 = await createAuthUser(email, temp);
       const b = db.batch();
@@ -304,7 +305,6 @@
     async createAccount({ name, username, role, group }) {
       needAdmin(); username = norm(username);
       if (checkName(username)) throw new Error(checkName(username));
-      if (role === 'admin') throw new Error('There can only be one admin.');
       if ((await usernames().doc(username).get()).exists) throw new Error('That username is taken.');
       const temp = auth.tempPassword(), email = makeEmail(username);
       const uid = await createAuthUser(email, temp);
@@ -315,8 +315,7 @@
       return temp;
     },
     async remove(id) {
-      needAdmin(); const a = target(id);
-      if (a.role === 'admin') throw new Error('The admin account cannot be deleted.');
+      needAdmin(); const a = target(id); guard(a);
       const b = db.batch();
       b.delete(users().doc(id));
       b.delete(usernames().doc(a.username));

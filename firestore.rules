@@ -3,7 +3,8 @@ rules_version = '2';
 // Alphabots schedule. Paste all of this into Firebase console > Firestore Database > Rules, then click Publish.
 //
 // Who can do what:
-//   admin   (exactly one)  everything, including approving accounts
+//   admin   (any number)   everything, including approving accounts and making other admins. All admins are
+//                          equal; the one limit is that nobody can demote, turn off or delete their own account.
 //   mentor                 create, edit and delete events, tasks, parts and news
 //   lead                   create and edit events, tasks and parts; create and edit their own news posts
 //   student                read everything; change status and progress of tasks they are on (or their group is)
@@ -46,13 +47,13 @@ service cloud.firestore {
         || (signedIn() && request.auth.uid == uid
           && request.resource.data.role == 'admin' && request.resource.data.status == 'approved'
           && !exists(adminMarker()) && getAfter(adminMarker()).data.uid == uid)
-        // the admin adds accounts for other people, never another admin
-        || (isAdmin() && request.resource.data.role != 'admin');
+        // an admin adds accounts for other people (any role, so they can add another admin)
+        || isAdmin();
 
       allow update:
-        // the admin manages everyone else, and can never create a second admin
-        if (isAdmin() && resource.data.role != 'admin' && request.resource.data.role != 'admin')
-        // the admin can edit their own name, username and group
+        // an admin manages every other account, including making another admin or removing admin powers; never their own
+        if (isAdmin() && request.auth.uid != uid)
+        // an admin can edit their own name, username and group, but not their own role
         || (isAdmin() && request.auth.uid == uid && request.resource.data.role == 'admin'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'username', 'group', 'mustChange']))
         // anyone can clear their own "choose a new password" flag
@@ -60,7 +61,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mustChange'])
           && request.resource.data.mustChange == false);
 
-      allow delete: if isAdmin() && resource.data.role != 'admin';
+      allow delete: if isAdmin() && request.auth.uid != uid;
     }
 
     // Sign-in looks a username up here before it has a password. It holds only a made-up email address.

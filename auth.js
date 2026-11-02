@@ -8,7 +8,7 @@
   const auth = (App.auth = {});
 
   auth.ROLES = {
-    admin: { label: 'Admin', rank: 4, blurb: 'Everything, including approving accounts and settings. There is exactly one.' },
+    admin: { label: 'Admin', rank: 4, blurb: 'Everything, including approving accounts and settings. Any admin can make another account an admin, with the same powers.' },
     mentor: { label: 'Mentor', rank: 3, blurb: 'Create, edit and delete events, tasks, parts and news.' },
     lead: { label: 'Team lead', rank: 2, blurb: 'Create and edit events, tasks, parts and their own news posts. Cannot delete.' },
     student: { label: 'Student', rank: 1, blurb: 'View everything. Update the status of tasks assigned to them or their group.' }
@@ -108,24 +108,26 @@
   };
 
   /* ---------- admin actions (every one re-checks that the caller is the admin) ---------- */
-  const needAdmin = () => { const u = auth.current(); if (!u || u.role !== 'admin') throw new Error('Only the admin can do that.'); return u; };
+  const needAdmin = () => { const u = auth.current(); if (!u || u.role !== 'admin') throw new Error('Only an admin can do that.'); return u; };
   const save = () => store.persist();
   const target = (id) => { const a = accounts().find((x) => x.id === id); if (!a) throw new Error('Account not found.'); return a; };
 
+  // All admins are equal. The one protection: nobody can demote, turn off, delete or reset their own account,
+  // which also means the team can never end up with no admin. (Ask another admin to do it.)
+  const guard = (a) => {
+    if (auth.current() && a.id === auth.current().id) throw new Error('You cannot do that to your own account. Ask another admin.');
+  };
   auth.approve = function (id, role, group) {
     needAdmin(); const a = target(id);
-    if (role === 'admin') throw new Error('There can only be one admin.');
     a.status = 'approved'; a.role = auth.ROLES[role] ? role : 'student'; if (group != null) a.group = group; save();
   };
   auth.setRole = function (id, role) {
-    needAdmin(); const a = target(id);
-    if (a.role === 'admin') throw new Error('The admin account cannot change role.');
-    if (role === 'admin' || !auth.ROLES[role]) throw new Error('There can only be one admin.');
+    needAdmin(); const a = target(id); guard(a);
+    if (!auth.ROLES[role]) throw new Error('Unknown role.');
     a.role = role; save();
   };
   auth.setStatus = function (id, status) {
-    needAdmin(); const a = target(id);
-    if (a.role === 'admin') throw new Error('The admin account cannot be turned off.');
+    needAdmin(); const a = target(id); guard(a);
     a.status = status; save();
   };
   auth.update = function (id, { name, username, group }) {
@@ -135,20 +137,18 @@
     a.name = String(name || '').trim().slice(0, 80) || a.username; a.group = group || ''; save();
   };
   auth.resetPassword = async function (id) {
-    needAdmin(); const a = target(id); const temp = auth.tempPassword();
+    needAdmin(); const a = target(id); guard(a); const temp = auth.tempPassword();
     Object.assign(a, await makeCreds(temp), { mustChange: true }); save(); return temp;
   };
   auth.createAccount = async function ({ name, username, role, group }) {
     needAdmin(); username = String(username || '').trim().toLowerCase();
     const err = checkNew(username, null); if (err) throw new Error(err);
-    if (role === 'admin') throw new Error('There can only be one admin.');
     const temp = auth.tempPassword();
     accounts().push({ id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), username, name: String(name || '').trim().slice(0, 80) || username, role: auth.ROLES[role] ? role : 'student', status: 'approved', group: group || '', ...(await makeCreds(temp)), mustChange: true, created: stamp() });
     save(); return temp;
   };
   auth.remove = function (id) {
-    needAdmin(); const a = target(id);
-    if (a.role === 'admin') throw new Error('The admin account cannot be deleted.');
+    needAdmin(); const a = target(id); guard(a);
     store.state.accounts = accounts().filter((x) => x.id !== id); save();
   };
 

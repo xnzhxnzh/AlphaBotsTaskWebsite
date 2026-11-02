@@ -80,15 +80,25 @@
   }
 
   views.accounts = function (root) {
-    if (!auth.isAdmin()) { root.append(h('div', { class: 'card empty' }, 'Only the admin can manage accounts.')); return; }
+    if (!auth.isAdmin()) { root.append(h('div', { class: 'card empty' }, 'Only an admin can manage accounts.')); return; }
     const list = store.state.accounts.slice().sort((a, b) => auth.ROLES[b.role].rank - auth.ROLES[a.role].rank || a.name.localeCompare(b.name, undefined, { numeric: true }));
     const pending = list.filter((a) => a.status === 'pending');
     const rest = list.filter((a) => a.status !== 'pending');
     const students = list.filter((a) => a.role === 'student' && a.status === 'approved').length;
     const groupSelect = (value, onChange) => h('select', { class: 'inline-select', 'aria-label': 'Group', onchange: (e) => onChange(e.target.value) },
       [h('option', { value: '' }, 'No group'), ...store.groups().map((g) => h('option', { value: g, selected: g === value }, g))]);
-    const roleOptions = (sel, onChange) => h('select', { class: 'inline-select', 'aria-label': 'Role', onchange: (e) => onChange(e.target.value) },
-      Object.keys(auth.ROLES).filter((r) => r !== 'admin').map((r) => h('option', { value: r, selected: r === sel }, auth.ROLES[r].label)));
+    // Pending requests can only be approved as non-admins; an existing account can be made an admin from the table below.
+    const roleOptions = (sel, onChange, withAdmin) => h('select', { class: 'inline-select', 'aria-label': 'Role', onchange: (e) => onChange(e.target.value) },
+      Object.keys(auth.ROLES).filter((r) => withAdmin || r !== 'admin').map((r) => h('option', { value: r, selected: r === sel }, auth.ROLES[r].label)));
+    const me = auth.current();
+    // Making someone an admin, or removing admin powers, asks first. The menu is redrawn so it snaps back if you cancel.
+    const changeRole = (a, role) => {
+      const ask = role === 'admin' ? `Make ${a.name} an admin? Admins can approve accounts, reset passwords, change settings and make other admins.`
+        : a.role === 'admin' ? `Remove admin powers from ${a.name}?` : null;
+      if (!ask) return act(() => auth.setRole(a.id, role), 'Role updated')();
+      ui.confirm(ask, role === 'admin' ? 'Make admin' : 'Remove admin', act(() => auth.setRole(a.id, role), role === 'admin' ? `${a.name} is now an admin` : 'Role updated'));
+      App.render();
+    };
 
     const pendingCard = pending.length > 0 && h('section', { class: 'card', style: { marginBottom: '16px', borderColor: 'var(--warn)' } },
       h('div', { class: 'card-head' }, h('h2', null, `Waiting for approval (${pending.length})`)),
@@ -105,17 +115,17 @@
     const tbl = h('div', { class: 'card table-wrap' }, h('table', { class: 'tbl' },
       h('thead', null, h('tr', null, ['Name', 'Username', 'Role', 'Group', 'Status', ''].map((t) => h('th', null, t)))),
       h('tbody', null, rest.map((a) => {
-        const isAdmin = a.role === 'admin';
+        const self = !!me && a.id === me.id; // your own row: no demoting, turning off or deleting yourself
         return h('tr', { style: { cursor: 'default' } },
-          h('td', { class: 'title' }, a.name), h('td', null, h('code', null, a.username)),
-          h('td', null, isAdmin ? h('span', { class: 'badge s-done' }, 'Admin') : roleOptions(a.role, (v) => act(() => auth.setRole(a.id, v), 'Role updated')())),
+          h('td', { class: 'title' }, a.name, self && h('span', { class: 'muted' }, '  (you)')), h('td', null, h('code', null, a.username)),
+          h('td', null, self ? h('span', { class: 'badge s-done' }, auth.ROLES[a.role].label) : roleOptions(a.role, (v) => changeRole(a, v), true)),
           h('td', null, a.group || h('span', { class: 'muted' }, 'None')),
           h('td', null, ui.badge(a.status === 'approved' ? (a.mustChange ? 'Needs new password' : 'Active') : 'Turned off')),
           h('td', { class: 'row-actions' },
             h('button', { class: 'btn btn-small', type: 'button', onclick: () => editAccount(a) }, 'Edit'),
-            h('button', { class: 'btn btn-small', type: 'button', onclick: () => ui.confirm(`Give ${a.name} a new temporary password? The old one stops working.`, 'Reset', async () => { try { const pw = await auth.resetPassword(a.id); App.showCredentials('New temporary password', [{ name: a.name, username: a.username, password: pw }]); App.render(); } catch (e) { fail(e); } }) }, 'Reset password'),
-            !isAdmin && h('button', { class: 'btn btn-small', type: 'button', onclick: act(() => auth.setStatus(a.id, a.status === 'approved' ? 'disabled' : 'approved')) }, a.status === 'approved' ? 'Turn off' : 'Turn on'),
-            !isAdmin && h('button', { class: 'btn btn-danger btn-small', type: 'button', 'aria-label': `Delete ${a.name}`, onclick: () => ui.confirm(`Delete the account for ${a.name}?`, 'Delete', act(() => auth.remove(a.id), 'Account deleted')) }, ui.icon('trash'))));
+            !self && h('button', { class: 'btn btn-small', type: 'button', onclick: () => ui.confirm(`Give ${a.name} a new temporary password? The old one stops working.`, 'Reset', async () => { try { const pw = await auth.resetPassword(a.id); App.showCredentials('New temporary password', [{ name: a.name, username: a.username, password: pw }]); App.render(); } catch (e) { fail(e); } }) }, 'Reset password'),
+            !self && h('button', { class: 'btn btn-small', type: 'button', onclick: act(() => auth.setStatus(a.id, a.status === 'approved' ? 'disabled' : 'approved')) }, a.status === 'approved' ? 'Turn off' : 'Turn on'),
+            !self && h('button', { class: 'btn btn-danger btn-small', type: 'button', 'aria-label': `Delete ${a.name}`, onclick: () => ui.confirm(`Delete the account for ${a.name}?`, 'Delete', act(() => auth.remove(a.id), 'Account deleted')) }, ui.icon('trash'))));
       }))));
 
     root.append(
@@ -124,7 +134,7 @@
         App.cloud && App.cloud.enabled
           ? [h('strong', null, 'Shared accounts: '), 'everyone signs in against the team database, and its rules enforce the roles. A password reset gives that person a new temporary password to hand over, and they choose their own the next time they sign in.']
           : [h('strong', null, 'Read this: '), 'accounts are stored in this browser only, because the site has no server. Other devices do not see them, and anyone who can open this browser\'s developer tools can read or change the data. Use it to keep the interface tidy, not for secrets. Export a backup from Settings to move everything to another device.']),
-      pendingCard,
+      pendingCard || '',
       h('h2', { style: { fontSize: '16px', margin: '8px 0' } }, 'Roles'),
       h('div', { class: 'grid grid-4', style: { marginBottom: '18px' } }, Object.keys(auth.ROLES).map((r) => h('div', { class: 'card stat' }, h('strong', null, auth.ROLES[r].label), h('div', { class: 'lbl' }, auth.ROLES[r].blurb)))),
       h('h2', { style: { fontSize: '16px', margin: '8px 0' } }, 'All accounts'), tbl);
@@ -132,7 +142,7 @@
 
   /* ======================= SETTINGS (admin) ======================= */
   views.settings = function (root) {
-    if (!auth.isAdmin()) { root.append(h('div', { class: 'card empty' }, 'Only the admin can open Settings.')); return; }
+    if (!auth.isAdmin()) { root.append(h('div', { class: 'card empty' }, 'Only an admin can open Settings.')); return; }
     const st = store.state.settings;
     const name = h('input', { value: st.teamName, maxlength: 60, id: 's-name' });
     const num = h('input', { value: st.teamNumber, maxlength: 20, id: 's-num' });

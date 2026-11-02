@@ -21,12 +21,15 @@ no build step, no dependencies, and it runs on **GitHub Pages**.
 
 ## Accounts and roles
 
-There is **one admin**, the highest authority. Everyone else signs up or is added by the admin,
-and **only the admin can approve an account or give it more than student rights**.
+**Admins** are the highest authority, and **any admin can make another account an admin** with exactly the same powers
+(use the Role menu on the Accounts page). The first person to set the site up is the first admin. The one limit is that
+nobody can demote, turn off, delete or reset their own account, so there is always at least one admin. Everyone else
+signs up or is added by an admin, and **only an admin can approve an account or give it more than student rights**.
+Admins can also demote or remove each other, so only make admins of people you trust.
 
 | Role | Can do |
 |------|--------|
-| **Admin** (exactly one) | Everything, including Accounts and Settings |
+| **Admin** (as many as you like) | Everything, including Accounts and Settings, and making or removing other admins |
 | **Mentor** | Create, edit and delete events, tasks, parts and news |
 | **Team lead** | Create and edit events, tasks, parts and their own news posts. Cannot delete. |
 | **Student** (lowest) | View everything. Change the status and progress of tasks where they are a primary person or sub-person, or where their team is listed. |
@@ -51,7 +54,7 @@ makes shows up on everyone else's screen within a second. The roles above are en
 4. In Firestore, open the **Rules** tab. Delete what's there, paste in the whole of `firestore.rules`, and click **Publish**.
 5. Click the gear icon > **Project settings > General**. Under **Your apps**, click the web icon `</>`, give it a nickname, skip Hosting, and click **Register app**. Copy the `firebaseConfig` values it shows.
 6. In `firebase-config.js`, replace `null` with those values (the file shows the exact shape), then upload the changed file to GitHub.
-7. Open the site **yourself, first**. The first person to finish the setup screen becomes the one admin and gets the 15 student logins, so do this before you share the link.
+7. Open the site **yourself, first**. The first person to finish the setup screen becomes an admin and gets the 15 student logins, so do this before you share the link.
 
 **Good to know:**
 - Students sign in with a username and password. Behind the scenes each username has a made-up email address, so nobody needs a real one.

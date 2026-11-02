@@ -183,8 +183,8 @@
       r.readAsText(f);
     } });
     const intro = cloudOn
-      ? 'The team database is empty. Whoever finishes this screen first becomes the one admin, the highest authority: approves accounts, sets roles and manages settings. Do it yourself before you share the link. 15 student accounts are created for you with temporary passwords.'
-      : 'This is the first time the site has been opened here. The admin is the highest authority: approves accounts, sets roles, and manages settings. There is exactly one. 15 student accounts are created for you with temporary passwords.';
+      ? 'The team database is empty. Whoever finishes this screen first becomes an admin, the highest authority: approves accounts, sets roles, manages settings and can make other admins. Do it yourself before you share the link. 15 student accounts are created for you with temporary passwords.'
+      : 'This is the first time the site has been opened here. An admin is the highest authority: approves accounts, sets roles, manages settings and can make other admins. 15 student accounts are created for you with temporary passwords.';
     const g = gateShell('Set up the admin account', intro,
       h('form', { novalidate: true, onsubmit: async (e) => {
         e.preventDefault(); busy(go, true);

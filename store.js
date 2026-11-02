@@ -141,13 +141,11 @@
     };
     if (raw.accounts != null && !Array.isArray(raw.accounts)) throw new Error('"accounts" must be a list.');
     const seen = new Set();
-    let haveAdmin = false;
     for (const o of raw.accounts || []) {
       const username = str(o.username, 40).trim().toLowerCase();
       if (!username || seen.has(username)) continue;
       seen.add(username);
       let role = oneOf(o.role, ROLE_IDS, 'student');
-      if (role === 'admin') { if (haveAdmin) role = 'student'; haveAdmin = true; } // exactly one admin
       out.accounts.push({ id: str(o.id, 40) || uid(), username, name: str(o.name, 80) || username, role,
         status: role === 'admin' ? 'approved' : oneOf(o.status, ACCOUNT_STATUS, 'pending'), group: str(o.group, 60),
         salt: str(o.salt, 100), hash: str(o.hash, 200), iter: Math.min(1000000, Math.max(1000, Number(o.iter) || 150000)),
